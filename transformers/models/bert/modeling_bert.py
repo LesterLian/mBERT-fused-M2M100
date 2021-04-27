@@ -501,8 +501,8 @@ class BertLayer(nn.Module):
         # if decoder, return the attn key/values as the last output
         if self.is_decoder:
             outputs = outputs + (present_key_value,)
-
-        return outputs  # TODO: add attention output
+        # Modification
+        return outputs + (attention_output,)  # TODO: add attention output
 
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
@@ -515,6 +515,7 @@ class BertEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.attention_outputs = tuple()
 
     def forward(
         self,
@@ -575,6 +576,8 @@ class BertEncoder(nn.Module):
                     output_attentions,
                 )
 
+            # Modification
+            self.attention_outputs += layer_outputs[-1:]
             hidden_states = layer_outputs[0]
             if use_cache:
                 next_decoder_cache += (layer_outputs[-1],)
@@ -597,14 +600,16 @@ class BertEncoder(nn.Module):
                     all_cross_attentions,
                 ]
                 if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
+            ) + (self.attention_outputs,)
+        output = BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=next_decoder_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
             cross_attentions=all_cross_attentions,
-        )  # TODO: add attention output
+        )
+        output.attention_outputs = self.attention_outputs
+        return output  # TODO: add attention output
 
 
 class BertPooler(nn.Module):
@@ -984,16 +989,19 @@ class BertModel(BertPreTrainedModel):
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
         if not return_dict:
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        return BaseModelOutputWithPoolingAndCrossAttentions(
+            # Modification
+            return (sequence_output, pooled_output) + encoder_outputs[1:] + (encoder_outputs.attention_outputs,)
+        output = BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
             past_key_values=encoder_outputs.past_key_values,
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
             cross_attentions=encoder_outputs.cross_attentions,
-        )  # TODO: add attention output; remove Pool
+        )
+        # Modification
+        output.attention_outputs = encoder_outputs.attention_outputs
+        return output  # TODO: add attention output; remove Pool
 
 
 @add_start_docstrings(
