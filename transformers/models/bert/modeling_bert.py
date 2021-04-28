@@ -528,6 +528,7 @@ class BertEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        # Modification
         self.attention_outputs = tuple()
 
     def forward(
