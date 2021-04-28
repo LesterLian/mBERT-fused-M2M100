@@ -223,7 +223,7 @@ class M2M100Attention(nn.Module):
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
-    # TODO: add bert_output
+    # TODO: add bert_output or not
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -360,6 +360,7 @@ class M2M100EncoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         layer_head_mask: torch.Tensor,
         output_attentions: bool = False,
+        bert_attention_output=None,  # Modification
     ):
         """
         Args:
@@ -682,6 +683,7 @@ class M2M100Encoder(M2M100PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        bert_attention_outputs=None,  # Modification
     ):
         r"""
         Args:
@@ -780,6 +782,7 @@ class M2M100Encoder(M2M100PreTrainedModel):
                         attention_mask,
                         layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                         output_attentions=output_attentions,
+                        bert_attention_output=bert_attention_outputs[idx] if idx < 12 else None,  # Modification TODO: 1:2
                     )
 
                 hidden_states = layer_outputs[0]
@@ -1075,7 +1078,7 @@ class M2M100Model(M2M100PreTrainedModel):
         output_type=Seq2SeqModelOutput,
         config_class=_CONFIG_FOR_DOC,
     )
-    # TODO: add bert_output
+    # TODO: add bert_output (maybe not?)
     def forward(
         self,
         input_ids=None,
@@ -1210,6 +1213,7 @@ class M2M100ForConditionalGeneration(M2M100PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        bert_attention_outputs=None,  # Modification
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
