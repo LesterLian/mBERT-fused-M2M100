@@ -513,6 +513,8 @@ class BertLayer(nn.Module):
         if self.is_decoder:
             outputs = outputs + (present_key_value,)
         # Modification
+        # outputs is bert attention output with (1,number of tokens,embedding size) (1, 12, 768)
+        # attention_output is raw bert attention output with (1,number of tokens,embedding size) (1, 12, 768)
         return outputs + (attention_output,)  # TODO: add attention output
 
     def feed_forward_chunk(self, attention_output):
