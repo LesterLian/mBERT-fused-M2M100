@@ -391,17 +391,17 @@ class M2M100EncoderLayer(nn.Module):
         # output_concat = torch.cat((hidden_states.data, self.bert_attention_output), dim=1)
         # hidden_states = self.fuse_layer(output_concat)
         # Method 1
-        y = hidden_states.size()[1]
-        self.fuse_pooler = nn.AdaptiveAvgPool1d(y)
-        a = hidden_states.data.permute(0, 2, 1)
-        a = self.fuse_pooler(a)
-        a = self.fuse_layer(a)
-        hidden_states = a.premute(0, 2, 1)
+        # y = hidden_states.size()[1]
+        # self.fuse_pooler = nn.AdaptiveAvgPool1d(y)
+        # a = self.bert_attention_output.data.permute(0, 2, 1)
+        # a = self.fuse_pooler(a)
+        # a = self.fuse_layer(a)
+        # hidden_states = a.premute(0, 2, 1) + hidden_states
         # Method 2
         y = hidden_states.size()[1]
         self.fuse_pooler = nn.AdaptiveAvgPool2d((y, 768))
-        a = self.fuse_pooler(a)
-        hidden_states = self.fuse_layer(a)
+        a = self.fuse_pooler(self.bert_attention_output)
+        hidden_states = self.fuse_layer(a) + hidden_states
 
 
         hidden_states = residual + hidden_states
