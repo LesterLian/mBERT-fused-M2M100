@@ -63,10 +63,11 @@ class FuseLayer(nn.Module):
 
 
 class FusedM2M(nn.Module):
-    def __init__(self, bert: BertModel, m2m: M2M100Model, *args, **kwargs):
+    def __init__(self, bert: BertModel, m2m: M2M100Model, path: str = None):
         super().__init__()
         self.bert = bert
         self.m2m = m2m
+        self.fuse_layer_path = path
 
     def forward(
             self,
@@ -88,8 +89,15 @@ class FusedM2M(nn.Module):
             bert_input=None,
     ):
         if bert_input:
+            # Get BERT embedding
             bert_output = self.bert(**bert_input).last_hidden_state
+            # Get BERT attention outputs
             attention_outputs = self.bert(**bert_input, embedding_input=bert_output).attention_outputs
+            # Pass in BERT attention outputs to M2M layers
+            for i in range(len(attention_outputs)):
+                self.m2m.encoder.layers[i].bert_attention_output = attention_outputs[i]
+            # Load fuse layer
+            m2m.load_state_dict(torch.load(self.fuse_layer_path))
             return
             # return self.m2m(input_ids=input_ids,
             #                 attention_mask=attention_mask,
@@ -105,8 +113,7 @@ class FusedM2M(nn.Module):
             #                 use_cache=use_cache,
             #                 output_attentions=output_attentions,
             #                 output_hidden_states=output_hidden_states,
-            #                 return_dict=return_dict,
-            #                 bert_attention_outputs=attention_outputs
+            #                 return_dict=return_dict
             #                 )
 
 
@@ -125,12 +132,18 @@ m2m_tokenizer = M2M100Tokenizer.from_pretrained("facebook/m2m100_418M")
 # "La vie est comme une boîte de chocolat."
 
 # translate Chinese to English
-# m2m_tokenizer.src_lang = "zh"
-# encoded_zh = m2m_tokenizer(chinese_text, return_tensors="pt")
-# generated_tokens = m2m.generate(**encoded_zh, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"), bert_attention_outputs=[])
-# m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
-# "Life is like a box of chocolate."
-# print([m2m_tokenizer.decoder[int(id)] for id in encoded_zh.data['input_ids'][0] if int(id) in m2m_tokenizer.decoder])
+m2m_tokenizer.src_lang = "zh"
+encoded_zh = m2m_tokenizer(chinese_text, return_tensors="pt")
+generated_tokens = m2m.generate(**encoded_zh, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
+m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+"Life is like a box of chocolate."
+# for id in encoded_zh.data['input_ids'][0]:
+#     if int(id) in m2m_tokenizer.decoder:
+#         print(m2m_tokenizer.decoder[int(id)])
+#     else:
+#         print(m2m_tokenizer.id_to_lang_token[int(id)])
+print([m2m_tokenizer.decoder[int(id)] if int(id) in m2m_tokenizer.decoder else m2m_tokenizer.id_to_lang_token[int(id)]
+       for id in encoded_zh.data['input_ids'][0]])
 
 bert_type = 'bert-base-multilingual-cased'  # 'bert-base-multilingual-cased' or 'bert-large-multilingual-cased'
 bert_tokenizer = BertTokenizer.from_pretrained(bert_type)

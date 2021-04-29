@@ -223,7 +223,7 @@ class M2M100Attention(nn.Module):
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
-    # TODO: add bert_output or not
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -353,6 +353,10 @@ class M2M100EncoderLayer(nn.Module):
         self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
         self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.fuse_layer = nn.Linear(768, 1024)
+        self.bert_attention_output = None  # Modification
+        self.fuse_pooler = nn.AdaptiveAvgPool1d(1)
+
     # TODO: add bert_output
     def forward(
         self,
@@ -360,7 +364,7 @@ class M2M100EncoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         layer_head_mask: torch.Tensor,
         output_attentions: bool = False,
-        bert_attention_output=None,  # Modification
+        # bert_attention_output=None,  # Modification
     ):
         """
         Args:
@@ -382,6 +386,24 @@ class M2M100EncoderLayer(nn.Module):
             output_attentions=output_attentions,
         )
         hidden_states = F.dropout(hidden_states, p=self.dropout, training=self.training)
+        # Modification
+        # Fuse with BERT attention output
+        # output_concat = torch.cat((hidden_states.data, self.bert_attention_output), dim=1)
+        # hidden_states = self.fuse_layer(output_concat)
+        # Method 1
+        y = hidden_states.size()[1]
+        self.fuse_pooler = nn.AdaptiveAvgPool1d(y)
+        a = hidden_states.data.permute(0, 2, 1)
+        a = self.fuse_pooler(a)
+        a = self.fuse_layer(a)
+        hidden_states = a.premute(0, 2, 1)
+        # Method 2
+        y = hidden_states.size()[1]
+        self.fuse_pooler = nn.AdaptiveAvgPool2d((y, 768))
+        a = self.fuse_pooler(a)
+        hidden_states = self.fuse_layer(a)
+
+
         hidden_states = residual + hidden_states
 
         residual = hidden_states
@@ -683,7 +705,7 @@ class M2M100Encoder(M2M100PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        bert_attention_outputs=None,  # Modification
+        # bert_attention_outputs=None,  # Modification
     ):
         r"""
         Args:
@@ -782,7 +804,7 @@ class M2M100Encoder(M2M100PreTrainedModel):
                         attention_mask,
                         layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                         output_attentions=output_attentions,
-                        bert_attention_output=bert_attention_outputs[idx] if idx < 12 else None,  # Modification TODO: 1:2
+                        # bert_attention_output=bert_attention_outputs[idx] if bert_attention_outputs and idx < 12 else None,  # Modification TODO: 1:2
                     )
 
                 hidden_states = layer_outputs[0]
@@ -1213,7 +1235,7 @@ class M2M100ForConditionalGeneration(M2M100PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        bert_attention_outputs=None,  # Modification
+        # bert_attention_outputs=None,  # Modification
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
