@@ -455,7 +455,7 @@ class BertLayer(nn.Module):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
         # Modification
-        if embedding_input:
+        if embedding_input is not None:
             self_attention_outputs = self.attention(
                 embedding_input,
                 attention_mask,
@@ -550,6 +550,7 @@ class BertEncoder(nn.Module):
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
 
         next_decoder_cache = () if use_cache else None
+        self.attention_outputs = tuple()  # Modification
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
