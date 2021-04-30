@@ -62,59 +62,30 @@ class FuseLayer(nn.Module):
 #         return
 
 
-class FusedM2M(nn.Module):
-    def __init__(self, bert: BertModel, m2m: M2M100Model, path: str = None):
-        super().__init__()
+class FusedM2M(M2M100ForConditionalGeneration):
+    def __init__(self, bert: BertModel, m2m: M2M100Model, path: str = None, bert_input=None):
+        super().__init__(m2m.config)
         self.bert = bert
         self.m2m = m2m
+        self.model = m2m.model
+        self.base_model = m2m.base_model
         self.fuse_layer_path = path
+        self.bert_input = bert_input
 
-    def forward(
-            self,
-            input_ids=None,
-            attention_mask=None,
-            decoder_input_ids=None,
-            decoder_attention_mask=None,
-            head_mask=None,
-            decoder_head_mask=None,
-            encoder_outputs=None,
-            past_key_values=None,
-            inputs_embeds=None,
-            decoder_inputs_embeds=None,
-            labels=None,
-            use_cache=None,
-            output_attentions=None,
-            output_hidden_states=None,
-            return_dict=None,
-            bert_input=None,
-    ):
-        if bert_input:
+        if self.bert_input:
             # Get BERT embedding
             bert_output = self.bert(**bert_input).last_hidden_state
             # Get BERT attention outputs
             attention_outputs = self.bert(**bert_input, embedding_input=bert_output).attention_outputs
             # Pass in BERT attention outputs to M2M layers
             for i in range(len(attention_outputs)):
-                self.m2m.encoder.layers[i].bert_attention_output = attention_outputs[i]
+                self.m2m.model.encoder.layers[i].bert_attention_output = attention_outputs[i]
             # Load fuse layer
-            m2m.load_state_dict(torch.load(self.fuse_layer_path))
-            return
-            # return self.m2m(input_ids=input_ids,
-            #                 attention_mask=attention_mask,
-            #                 decoder_input_ids=decoder_input_ids,
-            #                 decoder_attention_mask=decoder_attention_mask,
-            #                 head_mask=head_mask,
-            #                 decoder_head_mask=decoder_head_mask,
-            #                 encoder_outputs=encoder_outputs,
-            #                 past_key_values=past_key_values,
-            #                 inputs_embeds=inputs_embeds,
-            #                 decoder_inputs_embeds=decoder_inputs_embeds,
-            #                 labels=labels,
-            #                 use_cache=use_cache,
-            #                 output_attentions=output_attentions,
-            #                 output_hidden_states=output_hidden_states,
-            #                 return_dict=return_dict
-            #                 )
+            if self.fuse_layer_path:
+                m2m.load_state_dict(torch.load(self.fuse_layer_path))
+
+    def forward(self, *input, **kwargs):
+        return self.m2m(*input, **kwargs)
 
 
 # resnet = resnet18()
@@ -134,8 +105,8 @@ m2m_tokenizer = M2M100Tokenizer.from_pretrained("facebook/m2m100_418M")
 # translate Chinese to English
 m2m_tokenizer.src_lang = "zh"
 encoded_zh = m2m_tokenizer(chinese_text, return_tensors="pt")
-generated_tokens = m2m.generate(**encoded_zh, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
-m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+# generated_tokens = m2m.generate(**encoded_zh, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
+# m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
 "Life is like a box of chocolate."
 # for id in encoded_zh.data['input_ids'][0]:
 #     if int(id) in m2m_tokenizer.decoder:
@@ -149,13 +120,14 @@ bert_type = 'bert-base-multilingual-cased'  # 'bert-base-multilingual-cased' or 
 bert_tokenizer = BertTokenizer.from_pretrained(bert_type)
 bert = BertModel.from_pretrained(bert_type)
 text = "Replace me by any text you'd like."
-encoded_input = bert_tokenizer(chinese_text, return_tensors='pt')
-output = bert(**encoded_input)
-print([bert_tokenizer.ids_to_tokens[int(id)] for id in encoded_input.data['input_ids'][0]])
+bert_input = bert_tokenizer(chinese_text, return_tensors='pt')
+# output = bert(**encoded_input)
+print([bert_tokenizer.ids_to_tokens[int(id)] for id in bert_input.data['input_ids'][0]])
 
-bert_vocab = bert_tokenizer.ids_to_tokens.values()
+# bert_vocab = bert_tokenizer.ids_to_tokens.values()
 # common = [token for token in m2m_tokenizer.encoder if token not in bert_vocab]
 
-fused_model = FusedM2M(bert, m2m)
-fused_model()
+fused_model = FusedM2M(bert, m2m, bert_input=bert_input)
+generated_tokens = fused_model.generate(**encoded_zh, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
+print(f'result: {m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)}')
 print('here')
