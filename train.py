@@ -82,6 +82,7 @@ def preprocess_bert(examples):
     return model_inputs
 
 
+# Originally Written
 def preprocess(examples):
     inputs = [ex[source_lang] for ex in examples["translation"]]
     targets = [ex[target_lang] for ex in examples["translation"]]
@@ -103,6 +104,7 @@ def preprocess(examples):
     return model_inputs
 
 
+# Based on Huggingface example
 column_names = raw_datasets["train"].column_names
 def preprocess_function(examples):
     inputs = [ex[source_lang] for ex in examples["translation"]]
@@ -116,6 +118,7 @@ def preprocess_function(examples):
     model_inputs["labels"] = labels["input_ids"]
 
     # Bert
+    # Investigate if any arguments are necessary after inputs
     bert_inputs = bert_tokenizer(inputs, max_length=512, truncation=True, padding='max_length')
     bert_inputs['input_ids'] = torch.Tensor(bert_inputs['input_ids'])
     bert_inputs['attention_mask'] = torch.Tensor(bert_inputs['attention_mask'])
@@ -133,6 +136,7 @@ load = False
 if load:
     tokenized_datasets = torch.load('data/tokenized_datasets.pt')
 else:
+    # Problem is due to batching
     tokenized_datasets = raw_datasets.map(preprocess_function, batched=True)
     torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
 # tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_m2m, batched=True)
