@@ -1,6 +1,4 @@
 from datasets import load_dataset, load_metric, DatasetDict
-from torch import optim
-
 from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration, Seq2SeqTrainingArguments, \
     DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model
 import numpy as np
@@ -31,9 +29,10 @@ class FusedM2M(M2M100ForConditionalGeneration):
                 m2m.load_state_dict(torch.load(self.fuse_layer_path))
 
     def forward(self, *input, **kwargs):
-        self.m2m.model.encoder.layers[-1].bert_attention_output = kwargs['bert_attention_output']
-        kwargs = {k: v for k, v in kwargs.items() if k in ['input_ids', 'labels']}
-        return self.m2m(**kwargs)
+        bert_output = self.bert(*input).last_hidden_state
+        attention_outputs = self.bert(*input, embedding_input=bert_output).attention_outputs
+        self.m2m.model.encoder.layers[-1].bert_attention_output = attention_outputs[-1]
+        return self.m2m(*input, **kwargs)
 
 
 # Load dataset
@@ -85,13 +84,12 @@ def preprocess_bert(examples):
 def preprocess(examples):
     inputs = [ex[source_lang] for ex in examples["translation"]]
     targets = [ex[target_lang] for ex in examples["translation"]]
-    model_inputs = m2m_tokenizer(inputs, max_length=max_input_length, truncation=True, padding=True, return_tensors='pt').tolist()
+    model_inputs = m2m_tokenizer(inputs, max_length=max_input_length, truncation=True)
 
     # Setup the tokenizer for targets
     with m2m_tokenizer.as_target_tokenizer():
-        labels = m2m_tokenizer(targets, max_length=max_target_length, truncation=True, padding=True, return_tensors='pt')
+        labels = m2m_tokenizer(targets, max_length=max_target_length, truncation=True)
 
-    model_inputs['input_ids'] = model_inputs['input_ids'].tolist()
     model_inputs["labels"] = labels["input_ids"]
 
     # Bert
@@ -103,39 +101,17 @@ def preprocess(examples):
     return model_inputs
 
 
-column_names = raw_datasets["train"].column_names
-def preprocess_function(examples):
-    inputs = [ex[source_lang] for ex in examples["translation"]]
-    targets = [ex[target_lang] for ex in examples["translation"]]
-    model_inputs = m2m_tokenizer(inputs, max_length=max_input_length, padding=False, truncation=True)
-
-    # Setup the tokenizer for targets
-    with m2m_tokenizer.as_target_tokenizer():
-        labels = m2m_tokenizer(targets, max_length=max_target_length, padding=False, truncation=True)
-
-    model_inputs["labels"] = labels["input_ids"]
-
-    # Bert
-    bert_inputs = bert_tokenizer(inputs, max_length=512, truncation=True, padding='max_length')
-    bert_inputs['input_ids'] = torch.Tensor(bert_inputs['input_ids'])
-    bert_inputs['attention_mask'] = torch.Tensor(bert_inputs['attention_mask'])
-    bert_output = bert(**bert_inputs).last_hidden_state
-    model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[
-        -1].tolist()
-    return model_inputs
-
-
 def filter_none(example):
     return example["translation"][source_lang] is not None and example["translation"][target_lang] is not None
 
 
-load = False
-if load:
-    tokenized_datasets = torch.load('data/tokenized_datasets.pt')
-else:
-    tokenized_datasets = raw_datasets.map(preprocess_function, batched=True)
-    torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
-# tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_m2m, batched=True)
+# load = True
+# if load:
+#     tokenized_datasets = torch.load('data/tokenized_datasets.pt')
+# else:
+#     tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess, batched=True)
+#     torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
+tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_m2m, batched=True)
 # tokenized_val = raw_datasets['validation'].filter(filter_none).map(preprocess, batched=True)
 # tokenized_train = raw_datasets['train'].filter(filter_none).map(preprocess, batched=True)
 # bert_tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_bert, batched=True)
@@ -147,29 +123,30 @@ for para in m2m.parameters():
 
 
 fused_model = FusedM2M(bert, m2m)
-fuse_parameters = []
-for layer in fused_model.m2m.model.encoder.layers:
-    for para in layer.fuse_layer.parameters():
-        para.requires_grad = True
-        fuse_parameters.append(para)
 
-# Train
-# dataloader = torch.utils.data.DataLoader(tokenized_datasets['train'], batch_size=16)  # TODO: need to pad everything
-# for (step, inputs) in enumerate(dataloader):
-for (step, inputs) in enumerate(tokenized_datasets['train']):
-    # Feed forward
-    # m2m_loss = m2m(**m2m_input, labels=labels)
-    loss = fused_model(**inputs)
+batch_size = 16
+args = Seq2SeqTrainingArguments(
+    "fused-checkpoints",
+    evaluation_strategy="steps",
+    learning_rate=2e-5,
+    per_device_train_batch_size=batch_size,
+    per_device_eval_batch_size=batch_size,
+    weight_decay=0.01,
+    save_total_limit=3,
+    num_train_epochs=1,
+    predict_with_generate=True,
+    fp16=True,
 
-    # Back propagation
-    loss.loss.backward()
+)
+data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=m2m)
 
-    # Step
-    # optimizer = optim.Adam(fuse_parameters)
-    optimizer = optim.SGD(fuse_parameters, lr=0.01)
-    optimizer.step()
 
-    # Save checkpoint
-    if not (step % 500):
-        state_dict = {k: v for k, v in fused_model.m2m.model.encoder.layers.state_dict().items() if 'fuse' in k}
-        torch.save(state_dict, f'checkpoints/step_{step}_loss_{loss[0]:.4f}.pt')
+trainer = Seq2SeqTrainer(
+    fused_model,
+    args,
+    train_dataset=tokenized_datasets['train'],
+    eval_dataset=tokenized_datasets['validation'],
+    data_collator=data_collator,
+    tokenizer=m2m_tokenizer,
+)
+trainer.train()
