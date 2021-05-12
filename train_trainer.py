@@ -28,11 +28,41 @@ class FusedM2M(M2M100ForConditionalGeneration):
             if self.fuse_layer_path:
                 m2m.load_state_dict(torch.load(self.fuse_layer_path))
 
-    def forward(self, *input, **kwargs):
-        bert_output = self.bert(*input).last_hidden_state
-        attention_outputs = self.bert(*input, embedding_input=bert_output).attention_outputs
-        self.m2m.model.encoder.layers[-1].bert_attention_output = attention_outputs[-1]
-        return self.m2m(*input, **kwargs)
+    def forward(
+            self,
+            input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            decoder_attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            encoder_outputs=None,
+            past_key_values=None,
+            inputs_embeds=None,
+            decoder_inputs_embeds=None,
+            labels=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            bert_attention_output=None,
+    ):
+        self.m2m.model.encoder.layers[-1].bert_attention_output = bert_attention_output
+        return self.m2m(input_ids,
+                        attention_mask,
+                        decoder_input_ids,
+                        decoder_attention_mask,
+                        head_mask,
+                        decoder_head_mask,
+                        encoder_outputs,
+                        past_key_values,
+                        inputs_embeds,
+                        decoder_inputs_embeds,
+                        labels,
+                        use_cache,
+                        output_attentions,
+                        output_hidden_states,
+                        return_dict)
 
 
 # Load dataset
@@ -74,9 +104,11 @@ def preprocess_m2m(examples):
 def preprocess_bert(examples):
     inputs = [ex[source_lang] for ex in examples["translation"]]
     model_inputs = bert_tokenizer(inputs, max_length=max_input_length_bert, truncation=True)
-    bert_inputs = bert_tokenizer(inputs, max_length=max_input_length_bert, truncation=True, padding=True, return_tensors="pt")
+    bert_inputs = bert_tokenizer(inputs, max_length=max_input_length_bert, truncation=True, padding=True,
+                                 return_tensors="pt")
     bert_output = bert(**bert_inputs).last_hidden_state
-    model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[-1].tolist()
+    model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[
+        -1].tolist()
 
     return model_inputs
 
@@ -105,22 +137,25 @@ def filter_none(example):
     return example["translation"][source_lang] is not None and example["translation"][target_lang] is not None
 
 
-# load = True
-# if load:
-#     tokenized_datasets = torch.load('data/tokenized_datasets.pt')
-# else:
-#     tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess, batched=True)
-#     torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
-tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_m2m, batched=True)
+load = True
+if load:
+    tokenized_datasets = torch.load('data/tokenized_datasets.pt')
+else:
+    tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess, batched=True)
+    torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
+# tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_m2m, batched=True)
 # tokenized_val = raw_datasets['validation'].filter(filter_none).map(preprocess, batched=True)
 # tokenized_train = raw_datasets['train'].filter(filter_none).map(preprocess, batched=True)
 # bert_tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_bert, batched=True)
 
 # Prepare models
 m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M")
-for para in m2m.parameters():
-    para.requires_grad = False
-
+# for para in m2m.parameters():
+#     para.requires_grad = False
+modules = [m2m.model.shared, *m2m.model.encoder.layers[:11]]
+for module in modules:
+    for param in module.parameters():
+        param.requires_grad = False
 
 fused_model = FusedM2M(bert, m2m)
 
@@ -138,8 +173,7 @@ args = Seq2SeqTrainingArguments(
     fp16=True,
 
 )
-data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=m2m)
-
+data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=fused_model)
 
 trainer = Seq2SeqTrainer(
     fused_model,
