@@ -125,7 +125,7 @@ def preprocess(examples):
     model_inputs["labels"] = labels["input_ids"]
 
     # Bert
-    bert_inputs = bert_tokenizer(inputs, max_length=max_input_length_bert, truncation=True, padding=True,
+    bert_inputs = bert_tokenizer(inputs, max_length=51, truncation=True, padding='max_length',
                                  return_tensors="pt")
     bert_output = bert(**bert_inputs).last_hidden_state
     model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[
@@ -149,6 +149,7 @@ else:
 # bert_tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_bert, batched=True)
 
 # Prepare models
+# max_leng = max([len(e['bert_attention_output']) for e in tokenized_datasets['train']])
 m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M")
 # for para in m2m.parameters():
 #     para.requires_grad = False
@@ -159,7 +160,7 @@ for module in modules:
 
 fused_model = FusedM2M(bert, m2m)
 
-batch_size = 16
+batch_size = 1
 args = Seq2SeqTrainingArguments(
     "fused-checkpoints",
     evaluation_strategy="steps",
@@ -173,7 +174,7 @@ args = Seq2SeqTrainingArguments(
     fp16=True,
 
 )
-data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=fused_model)
+data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=fused_model, padding='longest')
 
 trainer = Seq2SeqTrainer(
     fused_model,
