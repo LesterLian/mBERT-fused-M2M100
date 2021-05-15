@@ -1,6 +1,6 @@
-from datasets import load_dataset, load_metric, DatasetDict
+from datasets import load_dataset, load_metric, DatasetDict, load_from_disk
 from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration, Seq2SeqTrainingArguments, \
-    DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model, M2M100Config
+    DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model, M2M100Config, BertConfig
 import numpy as np
 import torch
 
@@ -129,11 +129,12 @@ def filter_none(example):
 
 load = True
 if load:
-    tokenized_datasets = torch.load('data/tokenized_datasets.pt')
+    # tokenized_datasets = torch.load('data/tokenized_datasets.pt')
+    tokenized_datasets = load_from_disk("data")
 else:
     tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess, batched=True)
-    torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
-
+    tokenized_datasets.save_to_disk("data")
+    # torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
 # Prepare models
 config = M2M100Config.from_pretrained("facebook/m2m100_418M")
 config.method = fuse_method
