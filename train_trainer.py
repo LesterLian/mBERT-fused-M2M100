@@ -1,6 +1,6 @@
 from datasets import load_dataset, load_metric, DatasetDict
 from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration, Seq2SeqTrainingArguments, \
-    DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model
+    DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model, M2M100Config
 import numpy as np
 import torch
 
@@ -16,15 +16,6 @@ class FusedM2M(M2M100ForConditionalGeneration):
         self.bert_input = bert_input
 
         if self.bert_input:
-            # Get BERT embedding
-            # bert_output = self.bert(**bert_input).last_hidden_state
-            # Get BERT attention outputs
-            # attention_outputs = self.bert(**bert_input, embedding_input=bert_output).attention_outputs
-            # Pass in BERT attention outputs to M2M layers
-            # for i in range(len(attention_outputs)):
-            #     self.m2m.model.encoder.layers[i].bert_attention_output = attention_outputs[i]
-            # self.m2m.model.encoder.layers[-1].bert_attention_output = attention_outputs[-1]
-            # Load fuse layer
             if self.fuse_layer_path:
                 m2m.load_state_dict(torch.load(self.fuse_layer_path))
 
@@ -66,9 +57,6 @@ class FusedM2M(M2M100ForConditionalGeneration):
 
 
 # Load dataset
-# raw_datasets = load_dataset("bible_para", lang1="af", lang2="fi",
-#                             split=['train[:-3000]', 'train[-3000:-1000]', 'train[-1000:]'])
-# raw_datasets = load_dataset("bible_para", lang1="af", lang2="fi", split='train').train_test_split(1000)
 raw_datasets = load_dataset('wmt20_mlqe_task1', 'si-en')
 
 # Preprocess data
@@ -81,7 +69,9 @@ m2m_tokenizer.src_lang = source_lang
 m2m_tokenizer.tgt_lang = target_lang
 bert_type = 'bert-base-multilingual-uncased'
 bert_tokenizer = BertTokenizer.from_pretrained(bert_type)
-max_input_length_bert = 768
+max_input_length_bert = 51  # Get from tokenize inputs with bert
+fuse_method = 1
+checkpoint = "fused-checkpoints/checkpoint-7000"
 
 bert = BertModel.from_pretrained(bert_type)
 for para in bert.parameters():
@@ -125,7 +115,7 @@ def preprocess(examples):
     model_inputs["labels"] = labels["input_ids"]
 
     # Bert
-    bert_inputs = bert_tokenizer(inputs, max_length=51, truncation=True, padding='max_length',
+    bert_inputs = bert_tokenizer(inputs, max_length=max_input_length_bert, truncation=True, padding='max_length',
                                  return_tensors="pt")
     bert_output = bert(**bert_inputs).last_hidden_state
     model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[
@@ -143,16 +133,15 @@ if load:
 else:
     tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess, batched=True)
     torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
-# tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_m2m, batched=True)
-# tokenized_val = raw_datasets['validation'].filter(filter_none).map(preprocess, batched=True)
-# tokenized_train = raw_datasets['train'].filter(filter_none).map(preprocess, batched=True)
-# bert_tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess_bert, batched=True)
 
 # Prepare models
-# max_leng = max([len(e['bert_attention_output']) for e in tokenized_datasets['train']])
-m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M")
-# for para in m2m.parameters():
-#     para.requires_grad = False
+config = M2M100Config.from_pretrained("facebook/m2m100_418M")
+config.method = fuse_method
+if checkpoint:
+    m2m = M2M100ForConditionalGeneration.from_pretrained(checkpoint, config=config)
+else:
+    m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
+
 modules = [m2m.model.shared, *m2m.model.encoder.layers[:11]]
 for module in modules:
     for param in module.parameters():
@@ -160,9 +149,9 @@ for module in modules:
 
 fused_model = FusedM2M(bert, m2m)
 
-batch_size = 1
+batch_size = 4
 args = Seq2SeqTrainingArguments(
-    "fused-checkpoints",
+    "fused-checkpoints-2",
     evaluation_strategy="steps",
     learning_rate=2e-5,
     per_device_train_batch_size=batch_size,
@@ -174,7 +163,7 @@ args = Seq2SeqTrainingArguments(
     fp16=True,
 
 )
-data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=fused_model, padding='longest')
+data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=fused_model)
 
 trainer = Seq2SeqTrainer(
     fused_model,
