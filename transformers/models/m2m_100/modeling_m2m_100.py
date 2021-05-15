@@ -353,7 +353,11 @@ class M2M100EncoderLayer(nn.Module):
         self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
         self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.fuse_layer = nn.Linear(768, 1024)  # or (1792, 1024)
+        self.method = config.method
+        if self.method == 1:
+            self.fuse_layer = nn.Linear(1792, 1024)
+        else:
+            self.fuse_layer = nn.Linear(768, 1024)
         self.bert_attention_output = None  # Modification
         self.fuse_pooler = nn.AdaptiveAvgPool1d(1)
 
@@ -388,18 +392,19 @@ class M2M100EncoderLayer(nn.Module):
         # Modification
         # Fuse with BERT attention output
         # Method 1 in: 1792, out: 1024
-        # if self.bert_attention_output is not None:
-        #     y = hidden_states.size()[1]
-        #     self.fuse_pooler = nn.AdaptiveAvgPool2d((y, 768))
-        #     a = self.fuse_pooler(self.bert_attention_output)
-        #     a = torch.cat((hidden_states, a), dim=2)
-        #     hidden_states = self.fuse_layer(a)
-        # Method 2 in: 768, out: 1024
         if self.bert_attention_output is not None:
-            y = hidden_states.size()[1]
-            self.fuse_pooler = nn.AdaptiveAvgPool2d((y, 768))
-            a = self.fuse_pooler(self.bert_attention_output)
-            hidden_states = self.fuse_layer(a) + hidden_states
+            if self.method == 1:
+                y = hidden_states.size()[1]
+                self.fuse_pooler = nn.AdaptiveAvgPool2d((y, 768))
+                a = self.fuse_pooler(self.bert_attention_output)
+                a = torch.cat((hidden_states, a), dim=2)
+                hidden_states = self.fuse_layer(a)
+        # Method 2 in: 768, out: 1024
+            else:
+                y = hidden_states.size()[1]
+                self.fuse_pooler = nn.AdaptiveAvgPool2d((y, 768))
+                a = self.fuse_pooler(self.bert_attention_output)
+                hidden_states = self.fuse_layer(a) + hidden_states
 
         hidden_states = residual + hidden_states
 
