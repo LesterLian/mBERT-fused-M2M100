@@ -266,10 +266,10 @@ for module in modules:
         param.requires_grad = False
 
 # Trained linear layer with original m2m
-state_dict = {k: v for k, v in fused_model.m2m.model.encoder.layers[-1].state_dict().items() if 'fuse' in k}
-m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
-fused_model = FusedM2M(config, bert, m2m)
-fused_model.load_state_dict(state_dict, strict=False)
+# state_dict = {k: v for k, v in fused_model.m2m.model.encoder.layers[-1].state_dict().items() if 'fuse' in k}
+# m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
+# fused_model = FusedM2M(config, bert, m2m)
+# fused_model.load_state_dict(state_dict, strict=False)
 
 batch_size = args.batch_size
 trainer_args = Seq2SeqTrainingArguments(
