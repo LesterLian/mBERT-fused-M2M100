@@ -7,10 +7,10 @@ import torch
 
 
 class FusedM2M(M2M100ForConditionalGeneration):
-    def __init__(self, config: PretrainedConfig, bert: BertModel = None, m2m: M2M100Model = None, path: str = None,
+    def __init__(self, config: PretrainedConfig, bert: BertModel = None, m2m: M2M100ForConditionalGeneration = None, path: str = None,
                  bert_input=None):
         super().__init__(config)
-        self.bert = bert
+        self.bert = bert  # TODO: don't need
         self.m2m = m2m
         if m2m is not None:
             self.model = m2m.model
@@ -52,7 +52,7 @@ class FusedM2M(M2M100ForConditionalGeneration):
                         past_key_values,
                         inputs_embeds,
                         decoder_inputs_embeds,
-                        labels,
+                        labels,  # only for ConditionalGeneration, doesn't exist for M2M100Model
                         use_cache,
                         output_attentions,
                         output_hidden_states,
@@ -160,6 +160,7 @@ parser.add_argument("--seed", type=int, default=None, help="A seed for reproduci
 args = parser.parse_args()
 
 # Load dataset
+# We are using 'wmt20_mlqe_task1' 'si-en'
 raw_datasets = load_dataset(args.dataset_name, args.dataset_arg)
 
 # Preprocess data
@@ -243,6 +244,7 @@ config = M2M100Config.from_pretrained("facebook/m2m100_418M")
 config.method = fuse_method
 m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
 fused_model = FusedM2M(config, bert, m2m)
+# fused_model = FusedM2M(config)
 
 shared_weight = m2m.model.shared.weight.data.clone().detach()
 layer_1_weight = m2m.model.encoder.layers[0].fc1.weight.data.clone().detach()
@@ -251,16 +253,18 @@ fuse_12_weight = m2m.model.encoder.layers[-1].fuse_layer.weight.data.clone().det
 
 if checkpoint:
     state_dict = torch.load(f'{checkpoint}/pytorch_model.bin')
+    state_dict = {k: v for k, v in state_dict.items() if 'fuse' in k}  # load linear layer only
     fused_model.load_state_dict(state_dict, strict=False)
-    print(f'shared: {(shared_weight == fused_model.m2m.model.shared.weight.data.detach()).all()}')
-    print(f'layer 1: {(layer_1_weight == fused_model.m2m.model.encoder.layers[0].fc1.weight.data.detach()).all()}')
-    print(f'fuse 12: {(fuse_12_weight == fused_model.m2m.model.encoder.layers[-1].fuse_layer.weight.data.detach()).all()}')
+    # fused_model = FusedM2M.from_pretrained(checkpoint, config=config)
+    print(f'shared: {(shared_weight == fused_model.model.shared.weight.data.detach()).all()}')
+    print(f'layer 1: {(layer_1_weight == fused_model.model.encoder.layers[0].fc1.weight.data.detach()).all()}')
+    print(f'fuse 12: {(fuse_12_weight == fused_model.model.encoder.layers[-1].fuse_layer.weight.data.detach()).all()}')
     # fused_model = FusedM2M.from_pretrained(state_dict=state_dict, config=config)
 # else:
 #     m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
 #     fused_model = FusedM2M(config, bert, m2m)
 
-modules = [fused_model.m2m.model.shared, *fused_model.m2m.model.encoder.layers[:11]]
+modules = [fused_model.model.shared, *fused_model.model.encoder.layers[:11]]
 for module in modules:
     for param in module.parameters():
         param.requires_grad = False
@@ -295,4 +299,13 @@ trainer = Seq2SeqTrainer(
     data_collator=data_collator,
     tokenizer=m2m_tokenizer,
 )
-trainer.train()
+# trainer.train()
+print(trainer.evaluate())
+
+# for example in raw_datasets['test']:
+#     si_text = example["translation"][source_lang]
+#     en_text = example["translation"][target_lang]
+#     model_inputs = m2m_tokenizer(si_text, return_tensors='pt')
+#     generated_tokens = fused_model.generate(**model_inputs, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
+#     print(f'Reference:\n{en_text}')
+#     print(f'Result:\n{m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)}')
