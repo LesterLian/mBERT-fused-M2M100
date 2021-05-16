@@ -76,7 +76,7 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--predict_with_generate",
+    "--load_local_dataset",
     type=bool,
     default=True,
     help="",
@@ -113,7 +113,23 @@ parser.add_argument(
     type=str,
     default='bert-base-multilingual-uncased',
     help="Name or path to pretrained bert model from huggingface.",
-    required=True,
+)
+parser.add_argument(
+    "--fuse_method",
+    type=int,
+    default=1,
+    help="The fuse method. 1: 1792 linear layer for concatenated output; 2: 768 linear layer for bert output only.",
+)
+parser.add_argument(
+    "--checkpoint_path",
+    type=str,
+    default="fused-checkpoints",
+    help="Directory name to save the checkpoint of fused model.",
+)
+parser.add_argument(
+    "--checkpoint",
+    type=str,
+    help="Path to the checkpoint of fused model.",
 )
 parser.add_argument(
     "--batch_size",
@@ -122,50 +138,24 @@ parser.add_argument(
     help="Batch size (per device) for the training dataloader.",
 )
 parser.add_argument(
-    "--fuse_method",
-    type=int,
-    default=1,
-    help="The fuse method. 1: .",
-)
-parser.add_argument(
     "--learning_rate",
     type=float,
-    default=5e-5,
+    default=4e-5,
     help="Initial learning rate (after the potential warmup period) to use.",
 )
-parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
-parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs to perform.")
-parser.add_argument(
-    "--max_train_steps",
-    type=int,
-    default=None,
-    help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
-)
-parser.add_argument(
-    "--gradient_accumulation_steps",
-    type=int,
-    default=1,
-    help="Number of updates steps to accumulate before performing a backward/update pass.",
-)
-parser.add_argument(
-    "--lr_scheduler_type",
-    type=SchedulerType,
-    default="linear",
-    help="The scheduler type to use.",
-    choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
-)
+parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay to use.")
+parser.add_argument("--num_train_epochs", type=int, default=5, help="Total number of training epochs to perform.")
+# parser.add_argument(
+#     "--lr_scheduler_type",
+#     type=SchedulerType,
+#     default="linear",
+#     help="The scheduler type to use.",
+#     choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
+# )
 parser.add_argument(
     "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
 )
-parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
 parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
-parser.add_argument(
-    "--model_type",
-    type=str,
-    default=None,
-    help="Model type to use if training from scratch.",
-    choices=MODEL_TYPES,
-)
 
 args = parser.parse_args()
 
@@ -173,6 +163,8 @@ args = parser.parse_args()
 raw_datasets = load_dataset(args.dataset_name, args.dataset_arg)
 
 # Preprocess data
+max_source_length = args.max_source_length
+max_target_length = args.max_target_length
 source_lang = args.source_lang
 target_lang = args.target_lang
 m2m_tokenizer = M2M100Tokenizer.from_pretrained("facebook/m2m100_418M")
@@ -181,7 +173,8 @@ m2m_tokenizer.tgt_lang = target_lang
 bert_type = args.bert_type
 bert_tokenizer = BertTokenizer.from_pretrained(bert_type)
 max_input_length_bert = 51  # Get from tokenize inputs with bert
-fuse_method = 1
+fuse_method = args.fuse_method
+checkpoint = args.checkpoint
 checkpoint = "fused-checkpoints/checkpoint-7000"
 
 bert = BertModel.from_pretrained(bert_type)
@@ -192,7 +185,7 @@ for para in bert.parameters():
 def preprocess_m2m(examples):
     inputs = [ex[source_lang] for ex in examples["translation"]]
     targets = [ex[target_lang] for ex in examples["translation"]]
-    model_inputs = m2m_tokenizer(inputs, max_length=max_input_length, truncation=True)
+    model_inputs = m2m_tokenizer(inputs, max_length=args.max_bert_input_length, truncation=True)
 
     # Setup the tokenizer for targets
     with m2m_tokenizer.as_target_tokenizer():
@@ -217,7 +210,7 @@ def preprocess_bert(examples):
 def preprocess(examples):
     inputs = [ex[source_lang] for ex in examples["translation"]]
     targets = [ex[target_lang] for ex in examples["translation"]]
-    model_inputs = m2m_tokenizer(inputs, max_length=max_input_length, truncation=True)
+    model_inputs = m2m_tokenizer(inputs, max_length=args.max_bert_input_length, truncation=True)
 
     # Setup the tokenizer for targets
     with m2m_tokenizer.as_target_tokenizer():
@@ -238,8 +231,7 @@ def filter_none(example):
     return example["translation"][source_lang] is not None and example["translation"][target_lang] is not None
 
 
-load = True
-if load:
+if args.load_local_dataset:
     # tokenized_datasets = torch.load('data/tokenized_datasets.pt')
     tokenized_datasets = load_from_disk("data")
 else:
@@ -276,19 +268,19 @@ for module in modules:
 # Trained linear layer with original m2m
 state_dict = {k: v for k, v in fused_model.m2m.model.encoder.layers[-1].state_dict().items() if 'fuse' in k}
 m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
-fused_model = FusedM2M(bert, m2m)
-fused_model.load_state_dict(state_dict)
+fused_model = FusedM2M(config, bert, m2m)
+fused_model.load_state_dict(state_dict, strict=False)
 
-batch_size = 4
-args = Seq2SeqTrainingArguments(
-    "fused-checkpoints-2",
+batch_size = args.batch_size
+trainer_args = Seq2SeqTrainingArguments(
+    args.checkpoint_path,
     evaluation_strategy="steps",
-    learning_rate=2e-5,
+    learning_rate=args.learning_rate,
     per_device_train_batch_size=batch_size,
     per_device_eval_batch_size=batch_size,
-    weight_decay=0.01,
+    weight_decay=args.weight_decay,
     save_total_limit=3,
-    num_train_epochs=1,
+    num_train_epochs=args.num_train_epochs,
     predict_with_generate=True,
     fp16=True,
 
@@ -297,7 +289,7 @@ data_collator = DataCollatorForSeq2Seq(m2m_tokenizer, model=fused_model)
 
 trainer = Seq2SeqTrainer(
     fused_model,
-    args,
+    trainer_args,
     train_dataset=tokenized_datasets['train'],
     eval_dataset=tokenized_datasets['validation'],
     data_collator=data_collator,
