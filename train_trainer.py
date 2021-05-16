@@ -1,17 +1,20 @@
 from datasets import load_dataset, load_metric, DatasetDict, load_from_disk
 from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration, Seq2SeqTrainingArguments, \
-    DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model, M2M100Config, BertConfig
-import numpy as np
+    DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model, M2M100Config, BertConfig, \
+    PretrainedConfig
+import argparse
 import torch
 
 
 class FusedM2M(M2M100ForConditionalGeneration):
-    def __init__(self, bert: BertModel, m2m: M2M100Model, path: str = None, bert_input=None):
-        super().__init__(m2m.config)
+    def __init__(self, config: PretrainedConfig, bert: BertModel = None, m2m: M2M100Model = None, path: str = None,
+                 bert_input=None):
+        super().__init__(config)
         self.bert = bert
         self.m2m = m2m
-        self.model = m2m.model
-        self.base_model = m2m.base_model
+        if m2m is not None:
+            self.model = m2m.model
+            self.base_model = m2m.base_model
         self.fuse_layer_path = path
         self.bert_input = bert_input
 
@@ -56,18 +59,126 @@ class FusedM2M(M2M100ForConditionalGeneration):
                         return_dict)
 
 
+# Parse arguments
+parser = argparse.ArgumentParser(description="mBert fused M2M100 training using traniner")
+parser.add_argument(
+    "--dataset_name",
+    type=str,
+    default='wmt20_mlqe_task1',
+    help="The name of the dataset to use (from huggingface).",
+)
+
+parser.add_argument(
+    "--dataset_arg",
+    type=str,
+    default='si-en',
+    help="The argument for the dataset to use (from huggingface).",
+)
+
+parser.add_argument(
+    "--predict_with_generate",
+    type=bool,
+    default=True,
+    help="",
+)
+
+parser.add_argument(
+    "--max_source_length",
+    type=int,
+    default=1024,
+    help="The maximum total input sequence length after "
+         "tokenization.Sequences longer than this will be truncated, sequences shorter will be padded.",
+)
+parser.add_argument(
+    "--max_target_length",
+    type=int,
+    default=1024,
+    help="The maximum total sequence length for target text after "
+         "tokenization. Sequences longer than this will be truncated, sequences shorter will be padded."
+         "during ``evaluate`` and ``predict``.",
+)
+parser.add_argument("--source_lang", type=str, default='si', help="Source language id for translation.")
+parser.add_argument("--target_lang", type=str, default='en', help="Target language id for translation.")
+parser.add_argument(
+    "--max_bert_input_length",
+    type=int,
+    default=128,
+    help=(
+        "The maximum total input sequence length after tokenization. Sequences longer than this will be truncated,"
+        " sequences shorter will be padded if `--pad_to_max_lengh` is passed."
+    ),
+)
+parser.add_argument(
+    "--bert_type",
+    type=str,
+    default='bert-base-multilingual-uncased',
+    help="Name or path to pretrained bert model from huggingface.",
+    required=True,
+)
+parser.add_argument(
+    "--batch_size",
+    type=int,
+    default=8,
+    help="Batch size (per device) for the training dataloader.",
+)
+parser.add_argument(
+    "--fuse_method",
+    type=int,
+    default=1,
+    help="The fuse method. 1: .",
+)
+parser.add_argument(
+    "--learning_rate",
+    type=float,
+    default=5e-5,
+    help="Initial learning rate (after the potential warmup period) to use.",
+)
+parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
+parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs to perform.")
+parser.add_argument(
+    "--max_train_steps",
+    type=int,
+    default=None,
+    help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
+)
+parser.add_argument(
+    "--gradient_accumulation_steps",
+    type=int,
+    default=1,
+    help="Number of updates steps to accumulate before performing a backward/update pass.",
+)
+parser.add_argument(
+    "--lr_scheduler_type",
+    type=SchedulerType,
+    default="linear",
+    help="The scheduler type to use.",
+    choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
+)
+parser.add_argument(
+    "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
+)
+parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
+parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+parser.add_argument(
+    "--model_type",
+    type=str,
+    default=None,
+    help="Model type to use if training from scratch.",
+    choices=MODEL_TYPES,
+)
+
+args = parser.parse_args()
+
 # Load dataset
-raw_datasets = load_dataset('wmt20_mlqe_task1', 'si-en')
+raw_datasets = load_dataset(args.dataset_name, args.dataset_arg)
 
 # Preprocess data
-source_lang = 'si'
-target_lang = 'en'
-max_input_length = 1024
-max_target_length = 1024
+source_lang = args.source_lang
+target_lang = args.target_lang
 m2m_tokenizer = M2M100Tokenizer.from_pretrained("facebook/m2m100_418M")
 m2m_tokenizer.src_lang = source_lang
 m2m_tokenizer.tgt_lang = target_lang
-bert_type = 'bert-base-multilingual-uncased'
+bert_type = args.bert_type
 bert_tokenizer = BertTokenizer.from_pretrained(bert_type)
 max_input_length_bert = 51  # Get from tokenize inputs with bert
 fuse_method = 1
@@ -138,17 +249,35 @@ else:
 # Prepare models
 config = M2M100Config.from_pretrained("facebook/m2m100_418M")
 config.method = fuse_method
-if checkpoint:
-    m2m = M2M100ForConditionalGeneration.from_pretrained(checkpoint, config=config)
-else:
-    m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
+m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
+fused_model = FusedM2M(config, bert, m2m)
 
-modules = [m2m.model.shared, *m2m.model.encoder.layers[:11]]
+shared_weight = m2m.model.shared.weight.data.clone().detach()
+layer_1_weight = m2m.model.encoder.layers[0].fc1.weight.data.clone().detach()
+fuse_12_weight = m2m.model.encoder.layers[-1].fuse_layer.weight.data.clone().detach()
+
+
+if checkpoint:
+    state_dict = torch.load(f'{checkpoint}/pytorch_model.bin')
+    fused_model.load_state_dict(state_dict, strict=False)
+    print(f'shared: {(shared_weight == fused_model.m2m.model.shared.weight.data.detach()).all()}')
+    print(f'layer 1: {(layer_1_weight == fused_model.m2m.model.encoder.layers[0].fc1.weight.data.detach()).all()}')
+    print(f'fuse 12: {(fuse_12_weight == fused_model.m2m.model.encoder.layers[-1].fuse_layer.weight.data.detach()).all()}')
+    # fused_model = FusedM2M.from_pretrained(state_dict=state_dict, config=config)
+# else:
+#     m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
+#     fused_model = FusedM2M(config, bert, m2m)
+
+modules = [fused_model.m2m.model.shared, *fused_model.m2m.model.encoder.layers[:11]]
 for module in modules:
     for param in module.parameters():
         param.requires_grad = False
 
+# Trained linear layer with original m2m
+state_dict = {k: v for k, v in fused_model.m2m.model.encoder.layers[-1].state_dict().items() if 'fuse' in k}
+m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
 fused_model = FusedM2M(bert, m2m)
+fused_model.load_state_dict(state_dict)
 
 batch_size = 4
 args = Seq2SeqTrainingArguments(
