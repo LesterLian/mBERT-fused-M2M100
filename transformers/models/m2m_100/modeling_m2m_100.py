@@ -353,7 +353,8 @@ class M2M100EncoderLayer(nn.Module):
         self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
         self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.method = config.method
+        if 'method' in config.__dict__:
+            self.method = config.method
         if self.method == 1:
             self.fuse_layer = nn.Linear(1792, 1024)
         else:
