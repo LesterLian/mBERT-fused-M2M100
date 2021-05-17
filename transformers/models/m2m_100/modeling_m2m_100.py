@@ -708,6 +708,7 @@ class M2M100Encoder(M2M100PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        bert_attention_output = None,
     ):
         r"""
         Args:
@@ -1312,6 +1313,19 @@ class M2M100ForConditionalGeneration(M2M100PreTrainedModel):
         # cut decoder_input_ids if past is used
         if past is not None:
             decoder_input_ids = decoder_input_ids[:, -1:]
+
+        # Modification
+        # Add bert_attention_output for Fused Model's forward
+        if isinstance(self, M2M100ForConditionalGeneration):
+            return {
+                "input_ids": None,  # encoder_outputs is defined. input_ids not needed
+                "encoder_outputs": encoder_outputs,
+                "past_key_values": past,
+                "decoder_input_ids": decoder_input_ids,
+                "attention_mask": attention_mask,
+                "use_cache": use_cache,  # change this to avoid caching (presumably for debugging)
+                'bert_attention_output': kwargs['bert_attention_output']
+            }
 
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
