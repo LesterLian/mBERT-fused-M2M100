@@ -355,6 +355,8 @@ class M2M100EncoderLayer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
         if 'method' in config.__dict__:
             self.method = config.method
+        else:
+            self.method = 1
         if self.method == 1:
             self.fuse_layer = nn.Linear(1792, 1024)
         else:
@@ -813,6 +815,9 @@ class M2M100Encoder(M2M100PreTrainedModel):
 
             if output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
+        # Modification
+        if output_hidden_states:
+            encoder_states = encoder_states + (hidden_states,)
 
         hidden_states = self.layer_norm(hidden_states)
 
