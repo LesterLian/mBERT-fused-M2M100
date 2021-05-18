@@ -1,10 +1,11 @@
 from datasets import load_dataset, DatasetDict, Dataset
-from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, BertTokenizer, BertModel, M2M100Model
+from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, BertTokenizer, BertModel, M2M100Model, \
+    M2M100Config
 
 import torch
 import torch.optim as optim
 
-from utils import *
+# from utils import *
 
 
 # class FuseLayer(nn.Module):
@@ -103,6 +104,16 @@ for para in m2m.parameters():
 m2m_tokenizer.src_lang = "en"
 m2m_input = m2m_tokenizer(en_text, return_tensors="pt")
 
+modules = [m2m.model.shared, *m2m.model.encoder.layers[:11]] #Replace 5 by what you want
+# for module in modules:
+#     for param in module.parameters():
+#         param.requires_grad = False
+print(m2m.model.shared.weight.requires_grad)
+print(m2m.model.encoder.layers[0].fc2.weight.requires_grad)
+print(m2m.model.encoder.layers[3].fc2.weight.requires_grad)
+print(m2m.model.encoder.layers[6].fc2.weight.requires_grad)
+print(m2m.model.encoder.layers[11].fc2.weight.requires_grad)
+
 generated_tokens = m2m.generate(**m2m_input, forced_bos_token_id=m2m_tokenizer.get_lang_id("ja"))
 print('M2M result:')
 print(m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True))
@@ -125,6 +136,7 @@ bert_input = bert_tokenizer(zh_text, return_tensors='pt')
 PATH = './checkpoints'
 Train = True
 checkpoint = PATH + '/loss_0.8885.pt'
+checkpoint = None
 # Initialize Fused model
 fused_model = FusedM2M(bert, m2m, bert_input=bert_input)
 if checkpoint:
@@ -143,29 +155,29 @@ print(m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True))
 if Train:
     # Load dataset
     # sample_data = load_dataset("wmt16", "ro-en")
-    raw_dict = {}
-    for split in ['train', 'dev', 'test']:
-        en_data = read_file(f'data/{split}.alt.en')
-        my_data = read_file(f'data/{split}.alt.my')
-        raw_dict[split] = Dataset.from_dict({'translation': [{'en': e, 'my': m} for e, m in zip(en_data, my_data)]})
-
-    # Preprocess dataset
-    def preprocess(examples):
-        inputs = [ex['en'] for ex in examples["translation"]]
-        targets = [ex['my'] for ex in examples["translation"]]
-        model_inputs = m2m_tokenizer(inputs)
-
-        # Setup the tokenizer for targets
-        with m2m_tokenizer.as_target_tokenizer():
-            labels = m2m_tokenizer(targets)  # (targets, max_length=max_target_length, truncation=True)
-
-        model_inputs["labels"] = labels["input_ids"]
-        return model_inputs
-
-    m2m_tokenizer.src_lang = "en"
-    m2m_tokenizer.tgt_lang = "my"
-    for split in raw_dict:
-        raw_dict[split] = raw_dict[split].map(preprocess, batched=True)
+    # raw_dict = {}
+    # for split in ['train', 'dev', 'test']:
+    #     en_data = read_file(f'data/{split}.alt.en')
+    #     my_data = read_file(f'data/{split}.alt.my')
+    #     raw_dict[split] = Dataset.from_dict({'translation': [{'en': e, 'my': m} for e, m in zip(en_data, my_data)]})
+    #
+    # # Preprocess dataset
+    # def preprocess(examples):
+    #     inputs = [ex['en'] for ex in examples["translation"]]
+    #     targets = [ex['my'] for ex in examples["translation"]]
+    #     model_inputs = m2m_tokenizer(inputs)
+    #
+    #     # Setup the tokenizer for targets
+    #     with m2m_tokenizer.as_target_tokenizer():
+    #         labels = m2m_tokenizer(targets)  # (targets, max_length=max_target_length, truncation=True)
+    #
+    #     model_inputs["labels"] = labels["input_ids"]
+    #     return model_inputs
+    #
+    # m2m_tokenizer.src_lang = "en"
+    # m2m_tokenizer.tgt_lang = "my"
+    # for split in raw_dict:
+    #     raw_dict[split] = raw_dict[split].map(preprocess, batched=True)
 
     # for src_example, tgt_example in zip(my_dataset, en_dataset):
     #     preprocess_function(src_example, tgt_example)
@@ -173,18 +185,19 @@ if Train:
 
     # Set grad to True for fuse layer
     fuse_parameters = []
-    for layer in fused_model.m2m.model.encoder.layers:
+    for layer in fused_model.m2m.model.encoder.layers[-1:]:
         for para in layer.fuse_layer.parameters():
             para.requires_grad = True
             fuse_parameters.append(para)
 
     # Get the target embeddings
-    m2m_tokenizer.tgt_lang = 'en'
+    m2m_tokenizer.tgt_lang = 'zh'
     with m2m_tokenizer.as_target_tokenizer():
-        labels = m2m_tokenizer(tgt_text, return_tensors="pt").input_ids
+        labels = m2m_tokenizer(hi_text, return_tensors="pt").input_ids
 
     # Feed forward
     # m2m_loss = m2m(**m2m_input, labels=labels)
+    fused_inputs = m2m_tokenizer(hi_text, return_tensors="pt")
     loss = fused_model(**fused_inputs, labels=labels)  # TODO: losses are exact same
 
     # Back propagation
