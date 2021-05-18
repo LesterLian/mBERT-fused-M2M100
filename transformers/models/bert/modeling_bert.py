@@ -1009,7 +1009,7 @@ class BertModel(BertPreTrainedModel):
 
         if not return_dict:
             # Modification
-            return (sequence_output, pooled_output) + encoder_outputs[1:] + (encoder_outputs.attention_outputs,)
+            return (sequence_output, pooled_output) + encoder_outputs[1:]
         output = BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
