@@ -137,7 +137,6 @@ class M2M100SinusoidalPositionalEmbedding(nn.Module):
     def get_embedding(num_embeddings: int, embedding_dim: int, padding_idx: Optional[int] = None):
         """
         Build sinusoidal embeddings.
-
         This matches the implementation in tensor2tensor, but differs slightly from the description in Section 3.5 of
         "Attention Is All You Need".
         """
@@ -178,10 +177,8 @@ class M2M100SinusoidalPositionalEmbedding(nn.Module):
     def create_position_ids_from_inputs_embeds(self, inputs_embeds):
         """
         We are provided embeddings directly. We cannot infer which are padded so just generate sequential position ids.
-
         Args:
             inputs_embeds: torch.Tensor
-
         Returns: torch.Tensor
         """
         input_shape = inputs_embeds.size()[:-1]
@@ -371,6 +368,7 @@ class M2M100EncoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         layer_head_mask: torch.Tensor,
         output_attentions: bool = False,
+        bert_attention_output = None,
     ):
         """
         Args:
@@ -395,6 +393,7 @@ class M2M100EncoderLayer(nn.Module):
         # Modification
         # Fuse with BERT attention output
         # Method 1 in: 1792, out: 1024
+        self.bert_attention_output = bert_attention_output
         if self.bert_attention_output is not None:
             if self.method == 1:
                 y = hidden_states.size()[1]
@@ -570,11 +569,9 @@ M2M_100_START_DOCSTRING = r"""
     This model inherits from :class:`~transformers.PreTrainedModel`. Check the superclass documentation for the generic
     methods the library implements for all its model (such as downloading or saving, resizing the input embeddings,
     pruning heads etc.)
-
     This model is also a PyTorch `torch.nn.Module <https://pytorch.org/docs/stable/nn.html#torch.nn.Module>`__
     subclass. Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to
     general usage and behavior.
-
     Parameters:
         config (:class:`~transformers.M2M100Config`):
             Model configuration class with all the parameters of the model. Initializing with a config file does not
@@ -584,15 +581,11 @@ M2M_100_START_DOCSTRING = r"""
 
 M2M_100_GENERATION_EXAMPLE = r"""
     Translation example::
-
         >>> from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration
-
         >>> model = M2M100ForConditionalGeneration.from_pretrained('facebook/m2m100_418M')
         >>> tokenizer = M2M100Tokenizer.from_pretrained('facebook/m2m100_418M')
-
         >>> text_to_translate = "Life is like a box of chocolates"
         >>> model_inputs = tokenizer(text_to_translate, return_tensors='pt')
-
         >>> # translate to French
         >>> gen_tokens = model.generate( **model_inputs, forced_bos_token_id=tok.get_lang_id("fr"))
         >>> print(tokenizer.batch_decode(gen_tokens, skip_special_tokens=True))
@@ -603,18 +596,14 @@ M2M_100_INPUTS_DOCSTRING = r"""
         input_ids (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`):
             Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
             it.
-
             Indices can be obtained using :class:`~transformers.M2M100Tokenizer`. See
             :meth:`transformers.PreTrainedTokenizer.encode` and :meth:`transformers.PreTrainedTokenizer.__call__` for
             details.
-
             `What are input IDs? <../glossary.html#input-ids>`__
         attention_mask (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
-
             - 1 for tokens that are **not masked**,
             - 0 for tokens that are **masked**.
-
             `What are attention masks? <../glossary.html#attention-mask>`__
         decoder_input_ids (:obj:`torch.LongTensor` of shape :obj:`(batch_size, target_sequence_length)`, `optional`):
             Provide for translation and summarization training. By default, the model will create this tensor by
@@ -622,7 +611,6 @@ M2M_100_INPUTS_DOCSTRING = r"""
         decoder_attention_mask (:obj:`torch.LongTensor` of shape :obj:`(batch_size, target_sequence_length)`, `optional`):
             Default behavior: generate a tensor that ignores pad tokens in :obj:`decoder_input_ids`. Causal mask will
             also be used by default.
-
             If you want to change padding behavior, you should read :func:`modeling_m2m_100._prepare_decoder_inputs`
             and modify to your needs. See diagram 1 in `the paper <https://arxiv.org/abs/1910.13461>`__ for more
             information on the default strategy.
@@ -633,7 +621,6 @@ M2M_100_INPUTS_DOCSTRING = r"""
             cross-attention of the decoder.
         past_key_values (:obj:`Tuple[Tuple[torch.Tensor]]` of length :obj:`config.n_layers` with each tuple having 2 tuples each of which has 2 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
             Contains precomputed key and value hidden-states of the attention blocks. Can be used to speed up decoding.
-
             If :obj:`past_key_values` are used, the user can optionally input only the last :obj:`decoder_input_ids`
             (those that don't have their past key value states given to this model) of shape :obj:`(batch_size, 1)`
             instead of all :obj:`decoder_input_ids`` of shape :obj:`(batch_size, sequence_length)`.
@@ -646,7 +633,6 @@ M2M_100_INPUTS_DOCSTRING = r"""
             representation. If :obj:`past_key_values` is used, optionally only the last :obj:`decoder_inputs_embeds`
             have to be input (see :obj:`past_key_values`). This is useful if you want more control over how to convert
             :obj:`decoder_input_ids` indices into associated vectors than the model's internal embedding lookup matrix.
-
             If :obj:`decoder_input_ids` and :obj:`decoder_inputs_embeds` are both unset, :obj:`decoder_inputs_embeds`
             takes the value of :obj:`inputs_embeds`.
         use_cache (:obj:`bool`, `optional`):
@@ -667,7 +653,6 @@ class M2M100Encoder(M2M100PreTrainedModel):
     """
     Transformer encoder consisting of *config.encoder_layers* self attention layers. Each layer is a
     :class:`M2M100EncoderLayer`.
-
     Args:
         config: M2M100Config
         embed_tokens (torch.nn.Embedding): output embedding
@@ -717,18 +702,14 @@ class M2M100Encoder(M2M100PreTrainedModel):
             input_ids (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`):
                 Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you
                 provide it.
-
                 Indices can be obtained using :class:`~transformers.M2M100Tokenizer`. See
                 :meth:`transformers.PreTrainedTokenizer.encode` and :meth:`transformers.PreTrainedTokenizer.__call__`
                 for details.
-
                 `What are input IDs? <../glossary.html#input-ids>`__
             attention_mask (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
                 Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
-
                 - 1 for tokens that are **not masked**,
                 - 0 for tokens that are **masked**.
-
                 `What are attention masks? <../glossary.html#attention-mask>`__
             inputs_embeds (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
                 Optionally, instead of passing :obj:`input_ids` you can choose to directly pass an embedded
@@ -809,6 +790,7 @@ class M2M100Encoder(M2M100PreTrainedModel):
                         attention_mask,
                         layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                         output_attentions=output_attentions,
+                        bert_attention_output=(bert_attention_output if idx == 11 else None),
                     )
 
                 hidden_states = layer_outputs[0]
@@ -834,7 +816,6 @@ class M2M100Encoder(M2M100PreTrainedModel):
 class M2M100Decoder(M2M100PreTrainedModel):
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a :class:`M2M100DecoderLayer`
-
     Args:
         config: M2M100Config
         embed_tokens (torch.nn.Embedding): output embedding
@@ -884,18 +865,14 @@ class M2M100Decoder(M2M100PreTrainedModel):
             input_ids (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`):
                 Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you
                 provide it.
-
                 Indices can be obtained using :class:`~transformers.M2M100Tokenizer`. See
                 :meth:`transformers.PreTrainedTokenizer.encode` and :meth:`transformers.PreTrainedTokenizer.__call__`
                 for details.
-
                 `What are input IDs? <../glossary.html#input-ids>`__
             attention_mask (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
                 Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
-
                 - 1 for tokens that are **not masked**,
                 - 0 for tokens that are **masked**.
-
                 `What are attention masks? <../glossary.html#attention-mask>`__
             encoder_hidden_states (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, encoder_sequence_length, hidden_size)`, `optional`):
                 Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention
@@ -903,15 +880,12 @@ class M2M100Decoder(M2M100PreTrainedModel):
             encoder_attention_mask (:obj:`torch.LongTensor` of shape :obj:`(batch_size, encoder_sequence_length)`, `optional`):
                 Mask to avoid performing cross-attention on padding tokens indices of encoder input_ids. Mask values
                 selected in ``[0, 1]``:
-
                 - 1 for tokens that are **not masked**,
                 - 0 for tokens that are **masked**.
-
                 `What are attention masks? <../glossary.html#attention-mask>`__
             past_key_values (:obj:`Tuple[Tuple[torch.Tensor]]` of length :obj:`config.n_layers` with each tuple having 2 tuples each of which has 2 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
                 Contains precomputed key and value hidden-states of the attention blocks. Can be used to speed up
                 decoding.
-
                 If :obj:`past_key_values` are used, the user can optionally input only the last
                 :obj:`decoder_input_ids` (those that don't have their past key value states given to this model) of
                 shape :obj:`(batch_size, 1)` instead of all :obj:`decoder_input_ids`` of shape :obj:`(batch_size,
@@ -1124,6 +1098,7 @@ class M2M100Model(M2M100PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        bert_attention_output=None,
     ):
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1141,6 +1116,7 @@ class M2M100Model(M2M100PreTrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
+                bert_attention_output=bert_attention_output,
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=True
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
@@ -1242,25 +1218,20 @@ class M2M100ForConditionalGeneration(M2M100PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        bert_attention_output=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Labels for computing the masked language modeling loss. Indices should either be in ``[0, ...,
             config.vocab_size]`` or -100 (see ``input_ids`` docstring). Tokens with indices set to ``-100`` are ignored
             (masked), the loss is only computed for the tokens with labels in ``[0, ..., config.vocab_size]``.
-
         Returns:
-
         Example::
-
             >>> from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration
-
             >>> model = M2M100ForConditionalGeneration.from_pretrained('facebook/m2m100_418M')
             >>> tokenizer = M2M100Tokenizer.from_pretrained('facebook/m2m100_418M')
-
             >>> text_to_translate = "Life is like a box of chocolates"
             >>> model_inputs = tokenizer(text_to_translate, return_tensors='pt')
-
             >>> # translate to French
             >>> gen_tokens = model.generate( **model_inputs, forced_bos_token_id=tok.get_lang_id("fr"))
             >>> print(tokenizer.batch_decode(gen_tokens, skip_special_tokens=True))
@@ -1288,6 +1259,7 @@ class M2M100ForConditionalGeneration(M2M100PreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            bert_attention_output=bert_attention_output
         )
         lm_logits = self.lm_head(outputs[0])
 
@@ -1321,6 +1293,7 @@ class M2M100ForConditionalGeneration(M2M100PreTrainedModel):
 
         # Modification
         # Add bert_attention_output for Fused Model's forward
+        '''
         if isinstance(self, M2M100ForConditionalGeneration):
             return {
                 "input_ids": None,  # encoder_outputs is defined. input_ids not needed
@@ -1339,6 +1312,16 @@ class M2M100ForConditionalGeneration(M2M100PreTrainedModel):
             "decoder_input_ids": decoder_input_ids,
             "attention_mask": attention_mask,
             "use_cache": use_cache,  # change this to avoid caching (presumably for debugging)
+        }
+        '''
+        return {
+            "input_ids": None,  # encoder_outputs is defined. input_ids not needed
+            "encoder_outputs": encoder_outputs,
+            "past_key_values": past,
+            "decoder_input_ids": decoder_input_ids,
+            "attention_mask": attention_mask,
+            "use_cache": use_cache,  # change this to avoid caching (presumably for debugging)
+            'bert_attention_output': kwargs['bert_attention_output']
         }
 
     @staticmethod

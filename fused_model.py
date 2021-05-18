@@ -38,7 +38,7 @@ class FusedM2M(M2M100ForConditionalGeneration):
             return_dict=None,
             bert_attention_output=None,
     ):
-        self.m2m.model.encoder.layers[-1].bert_attention_output = bert_attention_output
+        #self.m2m.model.encoder.layers[-1].bert_attention_output = bert_attention_output
         return self.m2m(input_ids,
                         attention_mask,
                         decoder_input_ids,
@@ -53,4 +53,5 @@ class FusedM2M(M2M100ForConditionalGeneration):
                         use_cache,
                         output_attentions,
                         output_hidden_states,
-                        return_dict)
+                        return_dict,
+                        bert_attention_output)
