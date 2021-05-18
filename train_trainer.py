@@ -1,63 +1,12 @@
 from datasets import load_dataset, load_metric, DatasetDict, load_from_disk
+from tqdm import tqdm
+
 from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration, Seq2SeqTrainingArguments, \
     DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model, M2M100Config, BertConfig, \
     PretrainedConfig
 import argparse
 import torch
-
-
-class FusedM2M(M2M100ForConditionalGeneration):
-    def __init__(self, config: PretrainedConfig, bert: BertModel = None, m2m: M2M100ForConditionalGeneration = None, path: str = None,
-                 bert_input=None):
-        super().__init__(config)
-        self.bert = bert  # TODO: don't need
-        self.m2m = m2m
-        if m2m is not None:
-            self.model = m2m.model
-            self.base_model = m2m.base_model
-        self.fuse_layer_path = path
-        self.bert_input = bert_input
-
-        if self.bert_input:
-            if self.fuse_layer_path:
-                m2m.load_state_dict(torch.load(self.fuse_layer_path))
-
-    def forward(
-            self,
-            input_ids=None,
-            attention_mask=None,
-            decoder_input_ids=None,
-            decoder_attention_mask=None,
-            head_mask=None,
-            decoder_head_mask=None,
-            encoder_outputs=None,
-            past_key_values=None,
-            inputs_embeds=None,
-            decoder_inputs_embeds=None,
-            labels=None,
-            use_cache=None,
-            output_attentions=None,
-            output_hidden_states=None,
-            return_dict=None,
-            bert_attention_output=None,
-    ):
-        self.m2m.model.encoder.layers[-1].bert_attention_output = bert_attention_output
-        return self.m2m(input_ids,
-                        attention_mask,
-                        decoder_input_ids,
-                        decoder_attention_mask,
-                        head_mask,
-                        decoder_head_mask,
-                        encoder_outputs,
-                        past_key_values,
-                        inputs_embeds,
-                        decoder_inputs_embeds,
-                        labels,  # only for ConditionalGeneration, doesn't exist for M2M100Model
-                        use_cache,
-                        output_attentions,
-                        output_hidden_states,
-                        return_dict)
-
+from fused_model import FusedM2M
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="mBert fused M2M100 training using traniner")
@@ -176,7 +125,7 @@ bert_tokenizer = BertTokenizer.from_pretrained(bert_type)
 max_input_length_bert = 51  # Get from tokenize inputs with bert
 fuse_method = args.fuse_method
 checkpoint = args.checkpoint
-checkpoint = "fused-checkpoints/checkpoint-7000"
+# checkpoint = "fused-checkpoints/checkpoint-7000"
 
 bert = BertModel.from_pretrained(bert_type)
 for para in bert.parameters():
@@ -299,13 +248,31 @@ trainer = Seq2SeqTrainer(
     data_collator=data_collator,
     tokenizer=m2m_tokenizer,
 )
-# trainer.train()
+trainer.train()
 print(trainer.evaluate())
 
-# for example in raw_datasets['test']:
+# Metrics
+# sacrebleu_metric = load_metric("bleu")
+# orig_en_data = []
+# model_prediction = []
+# pred_file = open('reference.en', 'w', encoding='utf-8')
+# label_file = open('prediction.en', 'w', encoding='utf-8')
+# fused_model.eval()
+#
+# for example in tqdm(raw_datasets['test']):
 #     si_text = example["translation"][source_lang]
 #     en_text = example["translation"][target_lang]
 #     model_inputs = m2m_tokenizer(si_text, return_tensors='pt')
+#     bert_inputs = bert_tokenizer(si_text, max_length=max_input_length_bert, truncation=True, padding='max_length',
+#                                  return_tensors="pt")
+#     bert_output = bert(**bert_inputs).last_hidden_state
+#     model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[-1]
 #     generated_tokens = fused_model.generate(**model_inputs, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
-#     print(f'Reference:\n{en_text}')
-#     print(f'Result:\n{m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)}')
+#     decoded_preds = m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+#     decoded_labels = en_text
+#     pred_file.write(en_text+'\n')
+#     label_file.write(decoded_preds[0]+'\n')
+#     # print(en_text)
+#     # print(decoded_preds[0])
+#     orig_en_data.append([en_text])
+#     model_prediction.append(decoded_preds[0])
