@@ -3,7 +3,7 @@ from tqdm import tqdm
 
 from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration, Seq2SeqTrainingArguments, \
     DataCollatorForSeq2Seq, Seq2SeqTrainer, BertTokenizer, BertModel, M2M100Model, M2M100Config, BertConfig, \
-    PretrainedConfig
+    PretrainedConfig, SchedulerType
 import argparse
 import torch
 from fused_model import FusedM2M
@@ -101,10 +101,13 @@ parser.add_argument("--num_train_epochs", type=int, default=5, help="Total numbe
 #     help="The scheduler type to use.",
 #     choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
 # )
-parser.add_argument(
-    "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
-)
-parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+# parser.add_argument(
+#     "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
+# )
+# parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+parser.add_argument("--do_train", action='store_true')
+parser.add_argument("--do_eval", action='store_true')
+parser.add_argument("--do_generate", action='store_true')
 
 args = parser.parse_args()
 
@@ -125,36 +128,11 @@ bert_tokenizer = BertTokenizer.from_pretrained(bert_type)
 max_input_length_bert = 51  # Get from tokenize inputs with bert
 fuse_method = args.fuse_method
 checkpoint = args.checkpoint
-# checkpoint = "fused-checkpoints/checkpoint-7000"
 
+# Load BERT for preprocessing the BERT attention output
 bert = BertModel.from_pretrained(bert_type)
 for para in bert.parameters():
     para.requires_grad = False
-
-
-def preprocess_m2m(examples):
-    inputs = [ex[source_lang] for ex in examples["translation"]]
-    targets = [ex[target_lang] for ex in examples["translation"]]
-    model_inputs = m2m_tokenizer(inputs, max_length=args.max_bert_input_length, truncation=True)
-
-    # Setup the tokenizer for targets
-    with m2m_tokenizer.as_target_tokenizer():
-        labels = m2m_tokenizer(targets, max_length=max_target_length, truncation=True)
-
-    model_inputs["labels"] = labels["input_ids"]
-    return model_inputs
-
-
-def preprocess_bert(examples):
-    inputs = [ex[source_lang] for ex in examples["translation"]]
-    model_inputs = bert_tokenizer(inputs, max_length=max_input_length_bert, truncation=True)
-    bert_inputs = bert_tokenizer(inputs, max_length=max_input_length_bert, truncation=True, padding=True,
-                                 return_tensors="pt")
-    bert_output = bert(**bert_inputs).last_hidden_state
-    model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[
-        -1].tolist()
-
-    return model_inputs
 
 
 def preprocess(examples):
@@ -181,49 +159,42 @@ def filter_none(example):
     return example["translation"][source_lang] is not None and example["translation"][target_lang] is not None
 
 
+# Preprocess data or load from local file
 if args.load_local_dataset:
-    # tokenized_datasets = torch.load('data/tokenized_datasets.pt')
     tokenized_datasets = load_from_disk("data")
 else:
     tokenized_datasets = raw_datasets.filter(filter_none).map(preprocess, batched=True)
     tokenized_datasets.save_to_disk("data")
-    # torch.save(tokenized_datasets, 'data/tokenized_datasets.pt')
+
 # Prepare models
 config = M2M100Config.from_pretrained("facebook/m2m100_418M")
 config.method = fuse_method
 m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
 fused_model = FusedM2M(config, bert, m2m)
-# fused_model = FusedM2M(config)
 
-shared_weight = m2m.model.shared.weight.data.clone().detach()
-layer_1_weight = m2m.model.encoder.layers[0].fc1.weight.data.clone().detach()
-fuse_12_weight = m2m.model.encoder.layers[-1].fuse_layer.weight.data.clone().detach()
+# DEBUG: Check the weight of layers
+# shared_weight = m2m.model.shared.weight.data.clone().detach()
+# layer_1_weight = m2m.model.encoder.layers[0].fc1.weight.data.clone().detach()
+# fuse_12_weight = m2m.model.encoder.layers[-1].fuse_layer.weight.data.clone().detach()
 
 
+# Load state dict from local checkpoint
 if checkpoint:
     state_dict = torch.load(f'{checkpoint}/pytorch_model.bin')
     state_dict = {k: v for k, v in state_dict.items() if 'fuse' in k}  # load linear layer only
     fused_model.load_state_dict(state_dict, strict=False)
-    # fused_model = FusedM2M.from_pretrained(checkpoint, config=config)
-    print(f'shared: {(shared_weight == fused_model.model.shared.weight.data.detach()).all()}')
-    print(f'layer 1: {(layer_1_weight == fused_model.model.encoder.layers[0].fc1.weight.data.detach()).all()}')
-    print(f'fuse 12: {(fuse_12_weight == fused_model.model.encoder.layers[-1].fuse_layer.weight.data.detach()).all()}')
-    # fused_model = FusedM2M.from_pretrained(state_dict=state_dict, config=config)
-# else:
-#     m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
-#     fused_model = FusedM2M(config, bert, m2m)
+    # DEBUG: Check the weight of layers
+    # print(f'shared: {(shared_weight == fused_model.model.shared.weight.data.detach()).all()}')
+    # print(f'layer 1: {(layer_1_weight == fused_model.model.encoder.layers[0].fc1.weight.data.detach()).all()}')
+    # print(f'fuse 12: {(fuse_12_weight == fused_model.model.encoder.layers[-1].fuse_layer.weight.data.detach()).all()}')
 
+# Freeze M2M layers before 12th encoder layer
 modules = [fused_model.model.shared, *fused_model.model.encoder.layers[:11]]
 for module in modules:
     for param in module.parameters():
         param.requires_grad = False
 
-# Trained linear layer with original m2m
-# state_dict = {k: v for k, v in fused_model.m2m.model.encoder.layers[-1].state_dict().items() if 'fuse' in k}
-# m2m = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M", config=config)
-# fused_model = FusedM2M(config, bert, m2m)
-# fused_model.load_state_dict(state_dict, strict=False)
-
+# Train
 batch_size = args.batch_size
 trainer_args = Seq2SeqTrainingArguments(
     args.checkpoint_path,
@@ -248,31 +219,37 @@ trainer = Seq2SeqTrainer(
     data_collator=data_collator,
     tokenizer=m2m_tokenizer,
 )
-trainer.train()
-print(trainer.evaluate())
+if args.do_train:
+    trainer.train()
+if args.do_eval:
+    fused_model.eval()
+    print(trainer.evaluate())
 
-# Metrics
-# sacrebleu_metric = load_metric("bleu")
-# orig_en_data = []
-# model_prediction = []
-# pred_file = open('reference.en', 'w', encoding='utf-8')
-# label_file = open('prediction.en', 'w', encoding='utf-8')
-# fused_model.eval()
-#
-# for example in tqdm(raw_datasets['test']):
-#     si_text = example["translation"][source_lang]
-#     en_text = example["translation"][target_lang]
-#     model_inputs = m2m_tokenizer(si_text, return_tensors='pt')
-#     bert_inputs = bert_tokenizer(si_text, max_length=max_input_length_bert, truncation=True, padding='max_length',
-#                                  return_tensors="pt")
-#     bert_output = bert(**bert_inputs).last_hidden_state
-#     model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[-1]
-#     generated_tokens = fused_model.generate(**model_inputs, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
-#     decoded_preds = m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
-#     decoded_labels = en_text
-#     pred_file.write(en_text+'\n')
-#     label_file.write(decoded_preds[0]+'\n')
-#     # print(en_text)
-#     # print(decoded_preds[0])
-#     orig_en_data.append([en_text])
-#     model_prediction.append(decoded_preds[0])
+# Generation
+if args.do_generate:
+    fused_model.eval()
+    orig_en_data = []
+    model_prediction = []
+
+    for example in tqdm(raw_datasets['test']):
+        si_text = example["translation"][source_lang]
+        en_text = example["translation"][target_lang]
+        model_inputs = m2m_tokenizer(si_text, return_tensors='pt')
+        model_inputs = model_inputs.to('cuda')
+        bert_inputs = bert_tokenizer(si_text, max_length=max_input_length_bert, truncation=True, padding='max_length',
+                                     return_tensors="pt")
+        bert_inputs = bert_inputs.to('cuda')
+        bert_output = bert(**bert_inputs).last_hidden_state
+        model_inputs["bert_attention_output"] = bert(**bert_inputs, embedding_input=bert_output).attention_outputs[-1]
+        generated_tokens = fused_model.generate(**model_inputs, forced_bos_token_id=m2m_tokenizer.get_lang_id("en"))
+        decoded_preds = m2m_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+        decoded_labels = en_text
+        # print(en_text)
+        # print(decoded_preds[0])
+        orig_en_data.append(en_text)
+        model_prediction.append(decoded_preds[0])
+
+    with open('reference_new.en', 'w', encoding='utf-8') as label_file:
+        label_file.writelines(orig_en_data)
+    with open('prediction_new.en', 'w', encoding='utf-8') as pred_file:
+        pred_file.writelines(model_prediction)
