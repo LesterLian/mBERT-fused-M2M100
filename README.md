@@ -79,5 +79,5 @@ python extract_features_fused.py --checkpoint checkpoint_path/pytorch_model.bin 
 git clone https://github.com/m-popovic/chrF
 #characTER metric: 
 git clone https://github.com/rwth-i6/CharacTER
-All the evaluation are scripted in scores.ipynb
 ```
+All the evaluation are scripted in scores.ipynb
