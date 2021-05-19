@@ -75,7 +75,9 @@ python extract_features_fused.py --checkpoint checkpoint_path/pytorch_model.bin 
 
 #### Evaluation Metrics
 ```bash
-chrF metric: https://github.com/m-popovic/chrF
-characTER metric: https://github.com/rwth-i6/CharacTER
+#chrF metric: 
+git clone https://github.com/m-popovic/chrF
+#characTER metric: 
+git clone https://github.com/rwth-i6/CharacTER
 All the evaluation are scripted in scores.ipynb
 ```
