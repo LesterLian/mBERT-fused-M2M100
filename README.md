@@ -73,7 +73,7 @@ python extract_features_m2m.py --train_file train.txt --output_file chunking_rep
 python extract_features_fused.py --checkpoint checkpoint_path/pytorch_model.bin --train_file train.txt --output_file chunking_rep.json --batch_size 2
 ```
 
-#Evaluation Metrics
+#### Evaluation Metrics
 ```bash
 chrF metric: https://github.com/m-popovic/chrF
 characTER metric: https://github.com/rwth-i6/CharacTER
