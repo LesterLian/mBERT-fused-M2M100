@@ -54,7 +54,7 @@ D:/Users/lianz/Coding/Projects/cmsc828i/train_trainer.py -h
 #                        [--do_eval] [--do_generate]
 ```
 
-#### Evaluation Metrics
+## Evaluation Metrics
 ```bash
 #chrF metric: 
 git clone https://github.com/m-popovic/chrF
