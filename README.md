@@ -80,3 +80,11 @@ python extract_features_mBERT.py --train_file train.txt --output_file chunking_r
 python extract_features_m2m.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
 python extract_features_fused.py --checkpoint checkpoint_path/pytorch_model.bin --train_file train.txt --output_file chunking_rep.json --batch_size 2
 ```
+### Clustering Score
+```bash
+python cluster.py --feat_file chunking_rep.json
+```
+### Visualization
+```bash
+python visualize.py --feat_file chunking_rep.json --output_file_prefix tsne_layer_
+```
