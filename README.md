@@ -80,3 +80,10 @@ python extract_features_mBERT.py --train_file train.txt --output_file chunking_r
 python extract_features_m2m.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
 python extract_features_fused.py --checkpoint checkpoint_path/pytorch_model.bin --train_file train.txt --output_file chunking_rep.json --batch_size 2
 ```
+## Data & Results
+
+Our tokenized datasets is in data folder.
+
+Our Phrasal Analysis Visualization results are in results/Phrasal_Syntax_Visualization folder with results for mBERT, M2M-100 and mBERT fused M2M-100 model.
+
+Our Sinhala-English low resource NMT results are in results/Phrasal_Syntax_Visualization folder.
