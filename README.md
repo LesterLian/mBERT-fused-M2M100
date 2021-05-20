@@ -88,3 +88,11 @@ python cluster.py --feat_file chunking_rep.json
 ```bash
 python visualize.py --feat_file chunking_rep.json --output_file_prefix tsne_layer_
 ```
+
+## Data & Results
+
+Our tokenized datasets is in data folder.
+
+Our Phrasal Analysis Visualization results are in results/Phrasal_Syntax_Visualization folder with results for mBERT, M2M-100 and mBERT fused M2M-100 model.
+
+Our Sinhala-English low resource NMT results are in results/Phrasal_Syntax_Visualization folder.
