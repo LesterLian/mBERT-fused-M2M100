@@ -54,25 +54,6 @@ D:/Users/lianz/Coding/Projects/cmsc828i/train_trainer.py -h
 #                        [--do_eval] [--do_generate]
 ```
 
-## Metrics
-### Phrasal Analysis
-#### Setup
-```bash
-git clone https://github.com/ganeshjawahar/interpret_bert.git
-cp -rf interpret_bert/chunking/* ./
-cp -rf mBERT-fused-M2M100/interpret_bert/chunking/* ./
-# Download labeled data
-wget https://www.clips.uantwerpen.be/conll2000/chunking/train.txt.gz
-gunzip train.txt.gz
-```
-#### Extract Features
-```bash
-python extract_features.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
-python extract_features_mBERT.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
-python extract_features_m2m.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
-python extract_features_fused.py --checkpoint checkpoint_path/pytorch_model.bin --train_file train.txt --output_file chunking_rep.json --batch_size 2
-```
-
 #### Evaluation Metrics
 ```bash
 #chrF metric: 
@@ -81,3 +62,21 @@ git clone https://github.com/m-popovic/chrF
 git clone https://github.com/rwth-i6/CharacTER
 ```
 All the evaluation are scripted in scores.ipynb
+
+## Phrasal Analysis of Fused Model
+### Setup
+```bash
+git clone https://github.com/ganeshjawahar/interpret_bert.git
+cp -rf interpret_bert/chunking/* ./
+cp -rf mBERT-fused-M2M100/interpret_bert/chunking/* ./
+# Download labeled data
+wget https://www.clips.uantwerpen.be/conll2000/chunking/train.txt.gz
+gunzip train.txt.gz
+```
+### Extract Features
+```bash
+python extract_features.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
+python extract_features_mBERT.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
+python extract_features_m2m.py --train_file train.txt --output_file chunking_rep.json --batch_size 2
+python extract_features_fused.py --checkpoint checkpoint_path/pytorch_model.bin --train_file train.txt --output_file chunking_rep.json --batch_size 2
+```
